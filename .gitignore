@@ -1,0 +1,10 @@
+# Derived/bulky artifacts and extracted proprietary code (do not version/redistribute)
+bundled-pretty/
+main/
+renderer/
+raw/
+overlay-tool/Panel.app/
+hw
+probe
+*.o
+.DS_Store

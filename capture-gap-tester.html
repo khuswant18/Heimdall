@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Heimdall capture-gap tester</title>
+<style>
+  body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:24px;max-width:900px}
+  button{font:inherit;padding:6px 12px;margin-right:8px}
+  #log{white-space:pre-wrap;background:#111;color:#0f0;padding:12px;border-radius:8px;height:260px;overflow:auto;margin-top:12px}
+  .shots{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .shots figure{margin:0;font-size:11px;color:#555}
+  .shots img{width:160px;display:block;border:1px solid #ccc}
+  .mark{color:#c00;font-weight:bold}
+  kbd{background:#eee;border:1px solid #bbb;border-radius:4px;padding:1px 5px}
+</style>
+<h2>Heimdall capture-gap tester</h2>
+<p>Faithful replica of Heimdall 1.2.9's screen capture: one <b>JPEG at quality 0.2 every 15&nbsp;seconds</b>
+(<code>SNAPSHOT_INTERVAL_MS = 15000</code>). It records <b>nothing between frames</b> — exactly like the real app.
+Use it to measure your personal blind window: start capture, then press <kbd>M</kbd> the instant you do a
+"cheat" action and <kbd>M</kbd> again when you hide it. If no captured frame's timestamp lands inside that
+window, the real proctor would have no visual evidence either.</p>
+
+<p>
+  <button id="screen">Capture screen (like Heimdall)</button>
+  <button id="cam">Capture webcam</button>
+  <button id="stop" disabled>Stop</button>
+  <span id="status">idle</span>
+</p>
+<p>Press <kbd>M</kbd> to drop a time-marker (start/stop of an action you're hiding).</p>
+
+<div id="log"></div>
+<div class="shots" id="shots"></div>
+
+<script>
+const INTERVAL_MS = 15000;      // Heimdall SNAPSHOT_INTERVAL_MS
+const JPEG_QUALITY = 0.2;       // Heimdall toBlob quality
+const log = (m,cls="")=>{const d=document.getElementById("log");
+  d.innerHTML+=`<span class="${cls}">[${new Date().toLocaleTimeString()}.${String(Date.now()%1000).padStart(3,"0")}] ${m}</span>\n`;
+  d.scrollTop=d.scrollHeight;};
+let stream=null, timer=null, video=null, canvas=null, frameNo=0, markOpen=null;
+const frames=[];   // {n, t}
+const marks=[];    // {start, end}
+
+async function start(kind){
+  try{
+    stream = kind==="screen"
+      ? await navigator.mediaDevices.getDisplayMedia({video:true,audio:false})
+      : await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+  }catch(e){ log("permission/stream failed: "+e,"mark"); return; }
+  video=document.createElement("video"); video.srcObject=stream; video.muted=true; await video.play();
+  canvas=document.createElement("canvas"); canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+  document.getElementById("stop").disabled=false;
+  document.getElementById("screen").disabled=document.getElementById("cam").disabled=true;
+  document.getElementById("status").textContent=kind+" capturing — frame every 15s";
+  stream.getVideoTracks()[0].onended=stop;
+  log(`started ${kind} capture (${canvas.width}x${canvas.height}), 1 frame / ${INTERVAL_MS/1000}s`);
+  shoot(); // Heimdall's first frame is on the interval, but one now helps you see t0
+  timer=setInterval(shoot, INTERVAL_MS);
+}
+function shoot(){
+  const t=Date.now();
+  canvas.getContext("2d").drawImage(video,0,0,canvas.width,canvas.height);
+  canvas.toBlob(b=>{
+    const n=++frameNo; frames.push({n,t});
+    const url=URL.createObjectURL(b);
+    const fig=document.createElement("figure");
+    fig.innerHTML=`<img src="${url}"><figcaption>#${n}  ${new Date(t).toLocaleTimeString()}  ${(b.size/1024).toFixed(1)}KB</figcaption>`;
+    document.getElementById("shots").prepend(fig);
+    log(`captured frame #${n} (${(b.size/1024).toFixed(1)} KB)`);
+  },"image/jpeg",JPEG_QUALITY);
+}
+function stop(){
+  clearInterval(timer); timer=null;
+  stream&&stream.getTracks().forEach(t=>t.stop());
+  document.getElementById("stop").disabled=true;
+  document.getElementById("screen").disabled=document.getElementById("cam").disabled=false;
+  document.getElementById("status").textContent="stopped";
+  report();
+}
+function report(){
+  log("────── RESULT ──────");
+  log(`frames captured: ${frames.length}, markers: ${marks.length}`);
+  marks.forEach((m,i)=>{
+    const caught=frames.filter(f=>f.t>=m.start && f.t<=m.end);
+    const dur=((m.end-m.start)/1000).toFixed(1);
+    if(caught.length===0)
+      log(`action #${i+1} (${dur}s) → NO frame captured it = INVISIBLE to proctor`, "");
+    else
+      log(`action #${i+1} (${dur}s) → caught by ${caught.length} frame(s): #${caught.map(f=>f.n).join(", #")} = VISIBLE`, "mark");
+  });
+}
+addEventListener("keydown",e=>{
+  if(e.key.toLowerCase()!=="m"||!timer) return;
+  if(markOpen===null){ markOpen=Date.now(); log("● MARK start (action began)","mark"); }
+  else{ marks.push({start:markOpen,end:Date.now()}); log(`● MARK end (action ${((Date.now()-markOpen)/1000).toFixed(1)}s)`,"mark"); markOpen=null; }
+});
+document.getElementById("screen").onclick=()=>start("screen");
+document.getElementById("cam").onclick=()=>start("cam");
+document.getElementById("stop").onclick=stop;
+</script>
